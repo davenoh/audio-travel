@@ -61,10 +61,23 @@ async def text_to_mp3(text, out_path):
 
 def build_rss(episodes):
     fg = FeedGenerator()
-    fg.title('Devecon Commute')
-    fg.description('Daily development economics papers for the commute')
-    fg.link(href=RSS_BASE_URL, rel='alternate')
+    fg.load_extension('podcast')  # <-- add this, required for itunes tags
+    fg.title("Devecon Commute")
+    fg.link(href="https://davenoh.github.io/audio-travel/", rel='alternate')
+    fg.description("Daily development economics papers for the commute")
     fg.language('en')
+
+    # Required by Spotify:
+    fg.author(name="Dave Noh", email="nvb4y2rwnb@privaterelay.appleid.com") # <-- put your REAL gmail here, same as Spotify login
+    fg.podcast.itunes_author("Dave Noh")
+    fg.podcast.itunes_owner(name="Dave Noh", email="nvb4y2rwnb@privaterelay.appleid.com")
+    fg.podcast.itunes_category("Education")
+    fg.podcast.itunes_explicit("no")
+
+    # Cover art - must be publicly reachable:
+    fg.image(url="https://davenoh.github.io/audio-travel/cover_devecon.png", title="Devecon Commute")
+    fg.podcast.itunes_image("https://davenoh.github.io/audio-travel/cover_devecon.png")
+
     for ep in episodes:
         fe = fg.add_entry()
         fe.id(ep['url'])
