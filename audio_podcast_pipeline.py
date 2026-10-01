@@ -68,9 +68,9 @@ def build_rss(episodes):
     fg.language('en')
 
     # Required by Spotify:
-    fg.author(name="Dave Noh", email="nvb4y2rwnb@privaterelay.appleid.com") # <-- put your REAL gmail here, same as Spotify login
+    fg.author(name="Dave Noh", email="yunirs@gmail.com") # <-- put your REAL gmail here, same as Spotify login
     fg.podcast.itunes_author("Dave Noh")
-    fg.podcast.itunes_owner(name="Dave Noh", email="nvb4y2rwnb@privaterelay.appleid.com")
+    fg.podcast.itunes_owner(name="Dave Noh", email="yunirs@gmail.com")
     fg.podcast.itunes_category("Education")
     fg.podcast.itunes_explicit("no")
 
