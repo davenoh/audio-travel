@@ -8,7 +8,7 @@ import asyncio
 from dotenv import load_dotenv
 load_dotenv()
 
-RSS_BASE_URL = "https://YOUR_USERNAME.github.io/audio-travel/"
+RSS_BASE_URL = "https://davenoh.github.io/audio-travel/"
 AUDIO_BASE_URL = RSS_BASE_URL + "audio/"
 FEED_PATH = "feed/podcast.xml"
 
