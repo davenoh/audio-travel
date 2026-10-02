@@ -1,130 +1,134 @@
 import os
+import re
 import glob
 import time
-import re
 import asyncio
 import datetime
-from pathlib import Path
-
-# pip install edge-tts
+import requests
 import edge_tts
+from feedgen.feed import FeedGenerator
 
-# --- CONFIG ---
-NUM_PAPERS = 5
-DAYS_TO_KEEP = 15
+RSS_BASE_URL = "https://davenoh.github.io/audio-travel/"
+AUDIO_BASE_URL = RSS_BASE_URL + "audio/"
+FEED_PATH = "feed/podcast.xml"
 AUDIO_DIR = "audio"
-FEED_DIR = "feed"
-FEED_PATH = f"{FEED_DIR}/podcast.xml"
-VOICE = "en-US-AndrewNeural"  # free, sounds like Alloy. Try en-US-GuyNeural or en-US-AriaNeural
+DAYS_TO_KEEP = 15
+VOICE = "en-US-AndrewNeural"
 
-def sanitize_filename(title):
-    safe = re.sub(r'[^A-Za-z0-9_]+', '_', title)[:50]
-    return f"{safe}.mp3"
+def fetch_recent_papers(days=14):
+    today = datetime.date.today()
+    since = today - datetime.timedelta(days=days)
+    url = "https://api.openalex.org/works"
+    params = {
+        "filter": f"from_publication_date:{since}",
+        "search": "development economics",
+        "sort": "publication_date:desc",
+        "per-page": "10"
+    }
+    print(f"Fetching papers since {since}...")
+    headers = {"User-Agent": "audio-travel/1.0 (mailto:yunirs@gmail.com)"}
+    r = requests.get(url, params=params, headers=headers, timeout=30)
+    r.raise_for_status()
+    results = r.json().get('results', [])
+    print(f"Found {len(results)} papers")
+    return results
 
-# --- KEEP YOUR REAL FETCH HERE ---
-# This dummy fetch is so the file runs even without your old code.
-# REPLACE this function with your actual fetch_papers() if you have one.
-def fetch_papers(since_days=14):
-    print(f"Fetching papers since {(datetime.date.today() - datetime.timedelta(days=since_days)).isoformat()}...")
-    # EXAMPLE: return 10 fake papers for testing - your real code will return real papers
-    # Your real implementation probably fetches from arXiv / EconPapers
-    # Just make sure it returns list of dicts with 'title' and 'abstract'
-    return [
-        {"title": f"Paper {i} - Devecon Test {datetime.date.today()}", "abstract": f"This is a test abstract for paper {i}. This would be the real abstract of a development economics paper about GIS, big science, urbanism, and industrial organization. We summarize it for a commute."}
-        for i in range(1, 11)
-    ]
+def summarize_paper(paper):
+    title = paper.get('display_name') or paper.get('title') or "Untitled"
+    abstract = ""
+    if paper.get('abstract_inverted_index'):
+        inv = paper['abstract_inverted_index']
+        try:
+            max_pos = max([max(v) for v in inv.values()])
+            words = [''] * (max_pos + 1)
+            for w, pos in inv.items():
+                for p in pos:
+                    if p < len(words):
+                        words[p] = w
+            abstract = ' '.join(words)
+        except:
+            abstract = ""
+    if not abstract:
+        abstract = paper.get('abstract') or title
 
-async def text_to_speech_free(text, out_path):
-    print(f" TTS (FREE) -> {out_path}")
-    try:
-        communicate = edge_tts.Communicate(text[:4000], VOICE)
-        await communicate.save(out_path)
-        return True
-    except Exception as e:
-        print(f" TTS failed: {e}")
-        return False
+    summary = f"Paper title: {title}. Here is the abstract: {abstract[:2000]}. That's the key takeaway for today's commute."
+    print(f" Prepared summary for: {title[:80]}... ({len(summary)} chars)")
+    return title, summary
 
-def prepare_summary_free(paper):
-    # 100% free - just uses title + abstract, no OpenAI needed
-    # If you want summarization later, you can add it, but this keeps it free
-    title = paper.get('title','Untitled')
-    abstract = paper.get('abstract','')[:2000]
-    summary = f"Today's paper: {title}. Here's the key idea: {abstract}"
-    print(f" Prepared summary for: {title[:60]}... ({len(summary)} chars)")
-    return summary
+async def text_to_mp3(text, out_path):
+    print(f" TTS -> {out_path}")
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    communicate = edge_tts.Communicate(text, VOICE)
+    await communicate.save(out_path)
 
-def write_rss(episodes):
-    os.makedirs(FEED_DIR, exist_ok=True)
-    rss_items = ""
+def build_rss(episodes):
+    fg = FeedGenerator()
+    fg.load_extension('podcast')
+    fg.title("Devecon Commute")
+    fg.link(href="https://davenoh.github.io/audio-travel/", rel='alternate')
+    fg.description("Daily development economics papers for the commute")
+    fg.language('en')
+    fg.author(name="Dave Noh", email="yunirs@gmail.com")
+    fg.podcast.itunes_author("Dave Noh")
+    fg.podcast.itunes_owner(name="Dave Noh", email="yunirs@gmail.com")
+    fg.podcast.itunes_category("Education")
+    fg.podcast.itunes_explicit("no")
+    fg.image(url="https://davenoh.github.io/audio-travel/cover_devecon.png", title="Devecon Commute")
+    fg.podcast.itunes_image("https://davenoh.github.io/audio-travel/cover_devecon.png")
+
     for ep in episodes:
-        if not os.path.exists(ep['audio_path']):
-            continue
-        title = ep['title'].replace('&','&amp;').replace('<','&lt;')
-        url = f"https://davenoh.github.io/audio-travel/{ep['audio_path']}"
-        rss_items += f"""
-    <item>
-      <title>{title}</title>
-      <enclosure url="{url}" type="audio/mpeg" />
-      <guid>{url}</guid>
-      <pubDate>{datetime.datetime.now().strftime('%a, %d %b %Y %H:%M:%S GMT')}</pubDate>
-      <description>{title}</description>
-    </item>"""
+        fe = fg.add_entry()
+        fe.id(ep['url'])
+        fe.title(ep['title'])
+        fe.description(ep['summary'][:500])
+        fe.enclosure(ep['url'], 0, 'audio/mpeg')
+        fe.pubDate(ep['date'])
 
-    rss = f"""<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
-<channel>
-  <title>Devecon Commute</title>
-  <link>https://davenoh.github.io/audio-travel/</link>
-  <description>Private research commute - 5 papers daily - FREE TTS</description>
-  {rss_items}
-</channel>
-</rss>"""
-    with open(FEED_PATH, 'w') as f:
-        f.write(rss)
+    os.makedirs("feed", exist_ok=True)
+    fg.rss_file(FEED_PATH)
     print(f"RSS written to {FEED_PATH} with {len(episodes)} episodes")
 
-def cleanup_old_audio(audio_dir=AUDIO_DIR, days=DAYS_TO_KEEP):
+def cleanup_old_audio(days=DAYS_TO_KEEP):
     cutoff = time.time() - (days * 24 * 3600)
-    deleted = []
-    for fp in glob.glob(os.path.join(audio_dir, "*.mp3")):
-        try:
-            if os.path.getmtime(fp) < cutoff:
+    deleted = 0
+    for fp in glob.glob(os.path.join(AUDIO_DIR, "*.mp3")):
+        if os.path.getmtime(fp) < cutoff:
+            try:
                 os.remove(fp)
-                deleted.append(fp)
                 print(f"🗑️ Removed old (> {days}d): {fp}")
-        except Exception as e:
-            print(f"Could not delete {fp}: {e}")
-    if not deleted:
+                deleted += 1
+            except Exception as e:
+                print(f"Could not delete {fp}: {e}")
+    if deleted == 0:
         print(f"✅ No audio older than {days} days")
-    else:
-        print(f"Cleaned up {len(deleted)} old files")
-    return deleted
 
-async def main_async():
-    os.makedirs(AUDIO_DIR, exist_ok=True)
-    papers = fetch_papers(since_days=14)
-    print(f"Found {len(papers)} papers")
-
+async def main():
+    papers = fetch_recent_papers()
     episodes = []
-    for paper in papers[:NUM_PAPERS]:
-        title = paper.get('title','Untitled')
-        fname = sanitize_filename(title)
-        out_path = os.path.join(AUDIO_DIR, fname)
 
-        if os.path.exists(out_path):
-            print(f" Already exists: {out_path}")
-        else:
-            summary = prepare_summary_free(paper)
-            await text_to_speech_free(summary, out_path)
+    for paper in papers[:5]:
+        try:
+            title, summary = summarize_paper(paper)
+            safe = re.sub(r'[^a-zA-Z0-9]+', '_', title)[:50]
+            mp3_name = f"{safe}.mp3"
+            mp3_path = os.path.join(AUDIO_DIR, mp3_name)
 
-        if os.path.exists(out_path):
-            episodes.append({"title": title, "audio_path": out_path})
+            if not os.path.exists(mp3_path):
+                await text_to_mp3(summary, mp3_path)
+            else:
+                print(f" Already exists: {mp3_path}")
 
-    write_rss(episodes)
+            episodes.append({
+                'title': title,
+                'summary': summary,
+                'url': AUDIO_BASE_URL + mp3_name,
+                'date': datetime.datetime.now(datetime.timezone.utc)
+            })
+        except Exception as e:
+            print(f"Skipped: {e}")
+
+    build_rss(episodes)
     cleanup_old_audio(days=DAYS_TO_KEEP)
 
-def main():
-    asyncio.run(main_async())
-
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
