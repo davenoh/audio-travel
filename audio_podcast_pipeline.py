@@ -13,25 +13,56 @@ AUDIO_BASE_URL = RSS_BASE_URL + "audio/"
 FEED_PATH = "feed/podcast.xml"
 AUDIO_DIR = "audio"
 DAYS_TO_KEEP = 15
+DAYS_POOL = 365
+NUMB_PAPER = 50
 VOICE = "en-US-AndrewNeural"
 
-def fetch_recent_papers(days=14):
+def fetch_recent_papers(days=DAYS_POOL):
     today = datetime.date.today()
-    since = today - datetime.timedelta(days=days)
+    venues = [
+        "Journal of Development Economics",
+        "Economic Development and Cultural Change",
+        "World Bank Economic Review",
+        "The World Bank Economic Review",
+        "World Development",
+        "Journal of Development Studies",
+        "World Bank Research Observer",
+        "The World Bank Research Observer"
+    ]
+    venue_filter = "|".join(venues)
     url = "https://api.openalex.org/works"
+    headers = {"User-Agent": "audio-travel/1.0 (mailto:yunirs@gmail.com)"}
+
+    # Try increasing windows: 14 -> 90 -> 365
+    for lookback in [14, 90, days]:
+        since = today - datetime.timedelta(days=lookback)
+        params = {
+            "filter": f"from_publication_date:{since},host_venue.display_name:{venue_filter}",
+            "sort": "publication_date:desc",
+            "per-page": str(NUMB_PAPER)  # <-- match NUMB_PAPER
+        }
+        print(f"Fetching papers since {since} from {len(venues)} venues...")
+        try:
+            r = requests.get(url, params=params, headers=headers, timeout=30)
+            r.raise_for_status()
+            results = r.json().get('results', [])
+            print(f"Found {len(results)} papers in last {lookback} days")
+            if results:
+                return results
+        except Exception as e:
+            print(f"Fetch failed: {e}")
+
+    print("Fallback to broad search")
+    since = today - datetime.timedelta(days=days)
     params = {
         "filter": f"from_publication_date:{since}",
         "search": "development economics",
         "sort": "publication_date:desc",
-        "per-page": "10"
+        "per-page": str(NUMB_PAPER)
     }
-    print(f"Fetching papers since {since}...")
-    headers = {"User-Agent": "audio-travel/1.0 (mailto:yunirs@gmail.com)"}
     r = requests.get(url, params=params, headers=headers, timeout=30)
     r.raise_for_status()
-    results = r.json().get('results', [])
-    print(f"Found {len(results)} papers")
-    return results
+    return r.json().get('results', [])
 
 def summarize_paper(paper):
     title = paper.get('display_name') or paper.get('title') or "Untitled"
@@ -106,7 +137,7 @@ async def main():
     papers = fetch_recent_papers()
     episodes = []
 
-    for paper in papers[:5]:
+    for paper in papers[:NUMB_PAPER]:
         try:
             title, summary = summarize_paper(paper)
             safe = re.sub(r'[^a-zA-Z0-9]+', '_', title)[:50]
